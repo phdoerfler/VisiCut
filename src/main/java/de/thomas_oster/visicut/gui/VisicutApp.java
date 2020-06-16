@@ -29,7 +29,6 @@ import de.thomas_oster.visicut.managers.MappingManager;
 import de.thomas_oster.visicut.managers.MaterialManager;
 import de.thomas_oster.visicut.managers.PreferencesManager;
 import de.thomas_oster.visicut.managers.ProfileManager;
-import de.thomas_oster.visicut.misc.ApplicationInstanceListener;
 import de.thomas_oster.visicut.misc.ApplicationInstanceManager;
 import de.thomas_oster.visicut.misc.DialogHelper;
 import de.thomas_oster.visicut.misc.Helper;
@@ -38,11 +37,14 @@ import de.thomas_oster.visicut.model.LaserProfile;
 import de.thomas_oster.visicut.model.MaterialProfile;
 import de.thomas_oster.visicut.model.PlfPart;
 import de.thomas_oster.visicut.model.mapping.Mapping;
+import org.jdesktop.application.SingleFrameApplication;
+
+import javax.swing.JOptionPane;
+import javax.swing.UIManager;
 import java.awt.AWTEvent;
 import java.awt.EventQueue;
 import java.awt.Toolkit;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -50,10 +52,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.swing.JOptionPane;
-import javax.swing.UIManager;
-import org.jdesktop.application.Application;
-import org.jdesktop.application.SingleFrameApplication;
 
 /**
  * The main class of the application.
@@ -61,8 +59,6 @@ import org.jdesktop.application.SingleFrameApplication;
  */
 public class VisicutApp extends SingleFrameApplication
 {
-
-  public static Level GLOBAL_LOG_LEVEL = Level.SEVERE;
 
   private MainView mainView;
   private File loadedFile;
@@ -87,28 +83,14 @@ public class VisicutApp extends SingleFrameApplication
   {
   }
 
-  /**
-   * A convenient static getter for the application instance.
-   * @return the instance of VisicutApp
-   */
-  public static VisicutApp getApplication()
-  {
-    return Application.getInstance(VisicutApp.class);
-  }
-
   @Override
   protected void initialize(String[] args)
   {
     VisicutModel.getInstance().setPreferences(PreferencesManager.getInstance().getPreferences());
     try
     {
-      this.processProgramArguments(args);
-    }
-    catch (FileNotFoundException ex)
-    {
-      Logger.getLogger(VisicutApp.class.getName()).log(Level.SEVERE, null, ex);
-    }
-    catch (IOException ex)
+      processProgramArguments(args);
+    } catch (IOException ex)
     {
       Logger.getLogger(VisicutApp.class.getName()).log(Level.SEVERE, null, ex);
     }
@@ -201,13 +183,11 @@ public class VisicutApp extends SingleFrameApplication
     }
   }
 
-  public void processProgramArguments(String[] args) throws FileNotFoundException, IOException
+  public void processProgramArguments(String[] args) throws IOException
   {
     String laserdevice = null;
     String material = null;
-    Integer resolution = null;
     Integer port = null;
-    String mapping = null;
     String file = null;
     String basepath = null;
     Float height = null;
@@ -223,7 +203,7 @@ public class VisicutApp extends SingleFrameApplication
         {
           if ("--debug".equals(s) || "-d".equals(s))
           {
-            GLOBAL_LOG_LEVEL = Level.FINE;
+            // NOP
           }
           else if ("--convertsettings".equals(s))
           {
@@ -256,9 +236,9 @@ public class VisicutApp extends SingleFrameApplication
             System.out.println(""
               + "LibLaserCut\t Version: "+LibInfo.getVersion());
             System.out.println("\n\tSupported Drivers:");
-            for (Class c:LibInfo.getSupportedDrivers())
+            for (Class<? extends LaserCutter> c:LibInfo.getSupportedDrivers())
             {
-              System.out.println("\tModel: "+((LaserCutter) c.newInstance()).getModelName()+"\t Driver:"+c.getCanonicalName());
+              System.out.println("\tModel: "+(c.newInstance()).getModelName()+"\t Driver:"+c.getCanonicalName());
             }
             System.out.println("\n(c) 2011 by T.Oster, Media Computing Group, RWTH Aachen University");
             System.out.println("This Software is licensed under the GNU Lesser General Public License (LGPL)");
@@ -333,47 +313,39 @@ public class VisicutApp extends SingleFrameApplication
     if (port == null) {
         port = ApplicationInstanceManager.getSingleInstancePort();
     }
-    if (port != null)
+    System.out.println("using single-instance port: " + port);
+    // encode message to send to already running instance (if there is one)
+    String singleInstanceMessage = "";
+    if (file != null)
     {
-      System.out.println("using single-instance port: " + port);
-      // encode message to send to already running instance (if there is one)
-      String singleInstanceMessage = "";
-      if (file != null)
-      {
-          if (add) {
-              singleInstanceMessage = "@";
-          }
-          singleInstanceMessage += file;
-      }
-      if (port != 0) {
-        // single instance mode is active -- try contacting the already runnig instance
-        if (!ApplicationInstanceManager.registerInstance(port, singleInstanceMessage))
-        {
-          System.out.println("found already running instance. Opening file in that instance. Exiting.");
-          System.exit(0);
+        if (add) {
+            singleInstanceMessage = "@";
         }
-      }
-      ApplicationInstanceManager.setApplicationInstanceListener(new ApplicationInstanceListener()
-      {
-
-        public void newInstanceCreated(String message)
-        {
-          if (message != null && !"".equals(message))
-          {
-            if (message.startsWith("@"))
-            {
-              message = message.substring(1);
-              VisicutApp.this.mainView.loadFile(new File(message), false);
-            }
-            else
-            {
-              VisicutApp.this.mainView.loadFile(new File(message), true);
-            }
-          }
-          VisicutApp.this.mainView.requestFocus();
-        }
-      });
+        singleInstanceMessage += file;
     }
+    if (port != 0) {
+      // single instance mode is active -- try contacting the already runnig instance
+      if (!ApplicationInstanceManager.registerInstance(port, singleInstanceMessage))
+      {
+        System.out.println("found already running instance. Opening file in that instance. Exiting.");
+        System.exit(0);
+      }
+    }
+    ApplicationInstanceManager.setApplicationInstanceListener(message -> {
+      if (message != null && !"".equals(message))
+      {
+        if (message.startsWith("@"))
+        {
+          message = message.substring(1);
+          VisicutApp.this.mainView.loadFile(new File(message), false);
+        }
+        else
+        {
+          VisicutApp.this.mainView.loadFile(new File(message), true);
+        }
+      }
+      VisicutApp.this.mainView.requestFocus();
+    });
     if (laserdevice != null)
     {
       search:
@@ -391,7 +363,6 @@ public class VisicutApp extends SingleFrameApplication
     }
     if (material != null)
     {
-      LaserDevice cld = model.getSelectedLaserDevice();
       search:
       {
         for (MaterialProfile mp : MaterialManager.getInstance().getAll())
@@ -409,7 +380,7 @@ public class VisicutApp extends SingleFrameApplication
     {
       if (!execute)
       {
-        System.err.append("Total-height parameter takes only effect with --execute");
+        System.err.print("Total-height parameter takes only effect with --execute");
       }
       model.setMaterialThickness(height);
     }
@@ -423,11 +394,11 @@ public class VisicutApp extends SingleFrameApplication
       }
       try
       {
-        LinkedList<String> warnings = new LinkedList<String>();
+        LinkedList<String> warnings = new LinkedList<>();
         model.loadFile(MappingManager.getInstance(), f, warnings, false);
         if (execute && !VisicutModel.PLFFilter.accept(f))
         {
-          System.err.println("WARNING: execut parameter is only valid for PLF files. Will be ignored");
+          System.err.println("WARNING: execute parameter is only valid for PLF files. Will be ignored");
         }
         for(String s : warnings)
         {
@@ -442,6 +413,10 @@ public class VisicutApp extends SingleFrameApplication
         System.exit(1);
       }
     }
+    if (execute && file == null) {
+      System.err.println("Option --execute requires a file path but none was given");
+      System.exit(1);
+    }
     if (execute && file.toLowerCase().endsWith("plf"))
     {
       if (model.getSelectedLaserDevice() == null)
@@ -454,7 +429,7 @@ public class VisicutApp extends SingleFrameApplication
         System.err.println("No Material selected");
         System.exit(1);
       }
-      Map<LaserProfile, List<LaserProperty>> propmap = new LinkedHashMap<LaserProfile, List<LaserProperty>>();
+      Map<LaserProfile, List<LaserProperty>> propmap = new LinkedHashMap<>();
       //check if all settings are available
       for (PlfPart part : model.getPlfFile())
       {
@@ -476,7 +451,7 @@ public class VisicutApp extends SingleFrameApplication
       }
       try
       {
-        List<String> warnings = new LinkedList<String>();
+        List<String> warnings = new LinkedList<>();
         VisicutModel.getInstance().sendJob("VisiCut 1", new ProgressListener(){
 
           public void progressChanged(Object source, int percent)
@@ -521,12 +496,7 @@ public class VisicutApp extends SingleFrameApplication
             try
             {
               LaserPropertyManager.getInstance().getLaserProperties(l, m, p, h);
-            }
-            catch (FileNotFoundException ex)
-            {
-              Logger.getLogger(VisicutApp.class.getName()).log(Level.SEVERE, null, ex);
-            }
-            catch (IOException ex)
+            } catch (IOException ex)
             {
               Logger.getLogger(VisicutApp.class.getName()).log(Level.SEVERE, null, ex);
             }
